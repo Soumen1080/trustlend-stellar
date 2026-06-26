@@ -1219,13 +1219,13 @@ a {
   color: #a0a7c5;
 }
 
-.workspace-sidebar-link:hover {
+.workspace-sidebar-link:hover:not(.workspace-sidebar-link--active) {
   border-color: #d8e0f3;
   background: #ffffff;
   transform: translateX(3px);
 }
 
-.dark .workspace-sidebar-link:hover {
+.dark .workspace-sidebar-link:hover:not(.workspace-sidebar-link--active) {
   border-color: rgba(160, 167, 197, 0.3);
   background: #14182e;
 }
