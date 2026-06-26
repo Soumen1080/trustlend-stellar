@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -111,8 +111,9 @@ impl EscrowContract {
 
     /// Returns true if the 3-minute revocation window is still open.
     pub fn is_within_revocation_window(env: Env, escrow_id: u32) -> bool {
-        let hold = Self::get_hold(env.clone(), escrow_id);
-        env.ledger().timestamp() < hold.expires_at
+        let now = env.ledger().timestamp();
+        let hold = Self::load_hold(&env, escrow_id);
+        now < hold.expires_at
     }
 
     /// Lender revokes before the 3-minute window closes.
@@ -121,7 +122,8 @@ impl EscrowContract {
     pub fn revoke_hold(env: Env, lender: Address, escrow_id: u32) {
         lender.require_auth();
 
-        let mut hold = Self::get_hold(env.clone(), escrow_id);
+        let now = env.ledger().timestamp();
+        let mut hold = Self::load_hold(&env, escrow_id);
 
         if hold.lender != lender {
             panic!("Only the lender can revoke");
@@ -129,7 +131,7 @@ impl EscrowContract {
         if hold.status != EscrowStatus::Held {
             panic!("Hold is not in HELD state");
         }
-        if env.ledger().timestamp() >= hold.expires_at {
+        if now >= hold.expires_at {
             panic!("Revocation window has expired");
         }
 
@@ -145,12 +147,13 @@ impl EscrowContract {
         caller.require_auth();
         Self::assert_admin(&env, &caller);
 
-        let mut hold = Self::get_hold(env.clone(), escrow_id);
+        let now = env.ledger().timestamp();
+        let mut hold = Self::load_hold(&env, escrow_id);
 
         if hold.status != EscrowStatus::Held {
             panic!("Hold is not in HELD state");
         }
-        if env.ledger().timestamp() < hold.expires_at {
+        if now < hold.expires_at {
             panic!("Revocation window has not expired yet");
         }
 
@@ -187,4 +190,14 @@ impl EscrowContract {
             panic!("Unauthorised: caller is not admin");
         }
     }
+
+    fn load_hold(env: &Env, escrow_id: u32) -> EscrowHold {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Hold(escrow_id))
+            .expect("Escrow hold not found")
+    }
 }
+
+#[cfg(test)]
+mod test;
