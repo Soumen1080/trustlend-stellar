@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { enforceRouteRateLimit } from "@/lib/rate-limit";
 import { getServerSupabaseClient } from "@/lib/supabase/server";
 
 /**
@@ -9,6 +10,11 @@ import { getServerSupabaseClient } from "@/lib/supabase/server";
  */
 export async function POST(request: NextRequest) {
   try {
+    const rateLimitResponse = await enforceRouteRateLimit(request);
+    if (rateLimitResponse) {
+      return rateLimitResponse;
+    }
+
     const supabase = await getServerSupabaseClient();
     if (!supabase) {
       return NextResponse.json({ error: "Database unavailable" }, { status: 503 });

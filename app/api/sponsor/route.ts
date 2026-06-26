@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { TransactionBuilder, Keypair, Networks, Transaction } from "@stellar/stellar-sdk";
+import { enforceRouteRateLimit } from "@/lib/rate-limit";
 
 /**
  * TrustLend Advanced Feature: Fee Sponsorship (Gasless Transactions)
@@ -9,6 +10,11 @@ import { TransactionBuilder, Keypair, Networks, Transaction } from "@stellar/ste
  */
 export async function POST(req: NextRequest) {
   try {
+    const rateLimitResponse = await enforceRouteRateLimit(req);
+    if (rateLimitResponse) {
+      return rateLimitResponse;
+    }
+
     const { xdr } = await req.json();
     
     if (!xdr) {

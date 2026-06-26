@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUser } from "@/lib/auth/session";
+import { enforceRouteRateLimit } from "@/lib/rate-limit";
 import { getServerSupabaseClient, getServiceRoleClient } from "@/lib/supabase/server";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
 
@@ -12,6 +13,11 @@ interface RepayPayload {
 
 export async function POST(request: NextRequest) {
   try {
+    const rateLimitResponse = await enforceRouteRateLimit(request);
+    if (rateLimitResponse) {
+      return rateLimitResponse;
+    }
+
     const { user } = await requireAuthenticatedUser("borrower");
     const { loanId, amount, txHash, borrowerAddress } = (await request.json()) as RepayPayload;
 

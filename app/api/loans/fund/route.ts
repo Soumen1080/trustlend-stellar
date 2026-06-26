@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUser } from "@/lib/auth/session";
+import { enforceRouteRateLimit } from "@/lib/rate-limit";
 import { getServerSupabaseClient } from "@/lib/supabase/server";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
 
@@ -18,6 +19,11 @@ import { isRedirectError } from "next/dist/client/components/redirect-error";
  */
 export async function POST(request: NextRequest) {
   try {
+    const rateLimitResponse = await enforceRouteRateLimit(request);
+    if (rateLimitResponse) {
+      return rateLimitResponse;
+    }
+
     const { user } = await requireAuthenticatedUser("lender");
     const supabase = await getServerSupabaseClient();
     if (!supabase) {
