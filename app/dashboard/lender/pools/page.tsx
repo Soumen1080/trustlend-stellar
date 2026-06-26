@@ -538,4 +538,4 @@ export default async function LenderPoolsPage() {
       </div>
     </WorkspaceFrame>
   );
-}
+} 
