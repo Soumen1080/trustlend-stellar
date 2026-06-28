@@ -5,9 +5,8 @@ import { requireAuthenticatedUser } from "@/lib/auth/session";
 import { getLenderDashboardMetrics, presentLenderMetrics } from "@/lib/dashboard/metrics";
 import { getServerSupabaseClient } from "@/lib/supabase/server";
 import { lenderNavLinks } from "@/lib/dashboard/lender-links";
-import { formatCurrency } from "@/lib/utils/formatting";
 import { isLikelyTxHash, buildStellarTxVerificationUrl } from "@/lib/stellar/explorer";
-import { STELLAR_TESTNET } from "@/lib/stellar/testnet";
+import { AvailablePools } from "@/components/dashboard/AvailablePools";
 
 export default async function LenderPoolsPage() {
   const { user } = await requireAuthenticatedUser("lender");
@@ -51,26 +50,11 @@ export default async function LenderPoolsPage() {
   const totalDeployed = positions.reduce((s, p) => s + Number(p.principal_amount ?? 0), 0);
   const totalEarned   = positions.reduce((s, p) => s + Number(p.earned_interest   ?? 0), 0);
 
-  // Fetch live XLM balance from Stellar Horizon (server-side, best-effort)
-  let availableWalletBalance = 0;
-  if (walletAddress) {
-    try {
-      const horizonUrl =
-        process.env.NEXT_PUBLIC_STELLAR_HORIZON_URL ?? STELLAR_TESTNET.horizonUrl;
-      const accountRes = await fetch(`${horizonUrl}/accounts/${walletAddress}`, {
-        next: { revalidate: 30 },
-      });
-      if (accountRes.ok) {
-        const accountData = await accountRes.json();
-        const nativeBalance = (accountData.balances ?? []).find(
-          (b: { asset_type: string; balance: string }) => b.asset_type === "native"
-        );
-        availableWalletBalance = nativeBalance ? parseFloat(nativeBalance.balance) : 0;
-      }
-    } catch {
-      // Horizon unreachable — WalletCard will fetch live on the client side
-    }
-  }
+  // NOTE: Stellar Horizon balance is now fetched client-side by the
+  // WalletCard component and the AvailablePools client component.
+  // This removes the blocking server-side Horizon fetch that was causing
+  // the blank-screen delay on page load.
+  const availableWalletBalance = 0;
 
   // Generate cumulative portfolio growth data for the chart
   let cumulativeValue = 0;
@@ -285,73 +269,17 @@ export default async function LenderPoolsPage() {
           </article>
         </section>
 
-        {/* ── Available pools table ─────────────────────────────── */}
+        {/* ── Available pools – rendered client-side with skeleton loading ── */}
+        {/*
+          AvailablePools is a Client Component that:
+          1. Starts with isLoading = true and renders <PoolCardSkeleton />
+          2. Fetches lending_pools from Supabase browser client
+          3. Sets isLoading = false and renders animated pool cards
+          This eliminates the blank-screen delay caused by the old
+          server-side blocking table render.
+        */}
         <article className="workspace-card workspace-card--full">
-          <h2 className="workspace-card-title">Available Lending Pools</h2>
-          {pools.length === 0 ? (
-            <p className="workspace-card-copy" style={{ opacity: 0.6 }}>
-              No lending pools have been created yet. Check back soon.
-            </p>
-          ) : (
-            <div className="workspace-table-wrap">
-              <table className="workspace-table" aria-label="Lending pools">
-                <thead>
-                  <tr>
-                    <th>Pool Name</th>
-                    <th>Status</th>
-                    <th>APR</th>
-                    <th>Total Size</th>
-                    <th>Available</th>
-                    <th>My Stake</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pools.map((pool) => {
-                    const myPos = positions.find(
-                      (p) => String(p.pool_id) === String(pool.id)
-                    );
-                    return (
-                      <tr key={String(pool.id)}>
-                        <td>
-                          <strong>{String(pool.name)}</strong>
-                        </td>
-                        <td>
-                          <span
-                            style={{
-                              padding: "0.15rem 0.5rem",
-                              borderRadius: "9999px",
-                              fontSize: "0.75rem",
-                              fontWeight: 600,
-                              background:
-                                pool.status === "active"
-                                  ? "rgba(34,207,157,0.12)"
-                                  : "rgba(255,107,107,0.12)",
-                              color: pool.status === "active" ? "#22cf9d" : "#ff6b6b",
-                            }}
-                          >
-                            {String(pool.status).toUpperCase()}
-                          </span>
-                        </td>
-                        <td>{(Number(pool.apr_bps ?? 0) / 100).toFixed(2)}%</td>
-                        <td>{formatCurrency(Number(pool.total_liquidity ?? 0))}</td>
-                        <td>{Number(pool.available_liquidity ?? 0).toFixed(2)} XLM</td>
-                        <td
-                          style={{
-                            color: myPos ? "#22cf9d" : "inherit",
-                            fontWeight: myPos ? 600 : 400,
-                          }}
-                        >
-                          {myPos
-                            ? `${Number(myPos.principal_amount ?? 0).toFixed(2)} XLM ✅`
-                            : "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <AvailablePools />
         </article>
 
         {/* ── Deposit / Withdraw forms ──────────────────────────── */}
