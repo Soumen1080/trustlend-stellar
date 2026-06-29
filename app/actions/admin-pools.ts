@@ -14,6 +14,7 @@ import {
   fetchPoolById,
   fetchActivePoolsWithLiquidity,
 } from "@/lib/db/pools";
+import { sendLoanApprovedEmail } from "@/lib/email/resend";
 
 async function requireAdmin() {
   const supabase = await getServerSupabaseClient();
@@ -108,7 +109,7 @@ export async function approveLoan(
     // Fetch loan to validate
     const { data: loan, error: fetchErr } = await supabase
       .from("loans")
-      .select("id, status, principal_amount, pool_id")
+      .select("id, borrower_id, status, principal_amount, pool_id")
       .eq("id", loanId)
       .maybeSingle();
 
@@ -155,6 +156,12 @@ export async function approveLoan(
 
     if (poolErr) return { success: false, error: poolErr.message };
 
+    await sendLoanApprovedEmail({
+      userId: String(loan.borrower_id),
+      amount: loanAmount,
+      loanId,
+    });
+
     return { success: true };
   } catch (err) {
     return {
@@ -189,7 +196,7 @@ export async function runAutoMatch(): Promise<{
     // Get all pending loans ordered by creation (oldest first)
     const { data: pendingLoans } = await supabase
       .from("loans")
-      .select("id, principal_amount, pool_id")
+      .select("id, borrower_id, principal_amount, pool_id")
       .eq("status", "requested")
       .order("requested_at", { ascending: true });
 
@@ -267,6 +274,11 @@ export async function runAutoMatch(): Promise<{
           targetPoolId,
           (poolLiquidity.get(targetPoolId) ?? 0) - amount
         );
+        await sendLoanApprovedEmail({
+          userId: String(loan.borrower_id),
+          amount,
+          loanId: String(loan.id),
+        });
         matched++;
       }
     }
