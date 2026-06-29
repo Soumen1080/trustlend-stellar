@@ -109,8 +109,8 @@ export default async function BorrowerDashboardPage() {
   const REPAYABLE_STATUSES = ["active", "funded", "approved"];
   const activeLoans  = normalizedLoans.filter((l) => REPAYABLE_STATUSES.includes(String(l.effectiveStatus)));
   const pendingLoans = normalizedLoans.filter((l) => String(l.effectiveStatus) === "requested");
-  const inLoansXlm   = activeLoans.reduce((sum, l) => sum + Math.max(0, Number(l.principal_amount ?? 0) - Number(l.repaid_amount ?? 0)), 0);
-  const pendingXlm   = pendingLoans.reduce((sum, l) => sum + Number(l.principal_amount ?? 0), 0);
+  const inLoansXlm   = activeLoans.reduce((sum, l) => sum + Math.max(0, Number(l.principal_amount ?? 0) - Number(l.repaid_amount ?? 0)), 0) / 10000000;
+  const pendingXlm   = pendingLoans.reduce((sum, l) => sum + Number(l.principal_amount ?? 0), 0) / 10000000;
 
   const repayableLoan = activeLoans[0] ?? null;
   const dueAmount = repayableLoan
@@ -246,111 +246,74 @@ export default async function BorrowerDashboardPage() {
                 View full history →
               </a>
             </div>
-
-            <div className="borrower-loan-cards">
-              {normalizedLoans.slice(0, 6).map((loan) => {
-                const status   = String(loan.effectiveStatus);
-                const loanId   = String(loan.id);
-                const txHash   = loanTxMap[loanId] ?? "";
-                const hasTx    = isLikelyTxHash(txHash);
-                const principal = Number(loan.principal_amount ?? 0);
-                const repaid    = Number(loan.repaid_amount ?? 0);
-                const repayPct  = principal > 0 ? Math.min(100, Math.round((repaid / principal) * 100)) : 0;
-                const apr       = (Number(loan.apr_bps ?? 0) / 100).toFixed(2);
-                const due       = loan.due_at ? new Date(String(loan.due_at)).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
-
-                return (
-                  <article key={loanId} className="borrower-loan-card">
-                    {/* ── Card Header ── */}
-                    <div className={`borrower-loan-card__header ${cardHeaderClass(status)}`}>
-                      <div className="borrower-loan-card__chip">
-                        {isLive(status) && <span className="borrower-live-dot" />}
-                        {statusLabel(status)}
-                      </div>
-                      <p className="borrower-loan-card__amount">
-                        {principal.toFixed(2)}
-                        <span style={{ fontSize: "1rem", fontWeight: 600, marginLeft: "0.35rem", opacity: 0.8 }}>XLM</span>
-                      </p>
-                      <span className="borrower-loan-card__amount-label">Principal</span>
-                      <span className="borrower-loan-card__id">#{loanId.slice(0, 8)}</span>
-                    </div>
-
-                    {/* ── Card Body ── */}
-                    <div className="borrower-loan-card__body">
-                      {/* Repayment progress */}
-                      <div>
-                        <div className="borrower-loan-card__progress-row">
-                          <span>Repaid: <strong>{repaid.toFixed(2)} XLM</strong></span>
-                          <span>{repayPct}%</span>
-                        </div>
-                        <div className="borrower-loan-card__progress-track">
-                          <div
-                            className="borrower-loan-card__progress-fill"
-                            style={{ width: `${repayPct}%` }}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Key metadata */}
-                      <div className="borrower-loan-card__meta">
-                        <div className="borrower-loan-card__meta-item">
-                          <span className="borrower-loan-card__meta-label">APR</span>
-                          <span className="borrower-loan-card__meta-value">{apr}%</span>
-                        </div>
-                        <div className="borrower-loan-card__meta-item">
-                          <span className="borrower-loan-card__meta-label">Due Date</span>
-                          <span className="borrower-loan-card__meta-value">{due}</span>
-                        </div>
-                        {Number(loan.duration_days) > 0 && (
-                          <div className="borrower-loan-card__meta-item">
-                            <span className="borrower-loan-card__meta-label">Duration</span>
-                            <span className="borrower-loan-card__meta-value">{loan.duration_days}d</span>
-                          </div>
-                        )}
-                        <div className="borrower-loan-card__meta-item">
-                          <span className="borrower-loan-card__meta-label">Remaining</span>
-                          <span className="borrower-loan-card__meta-value">
-                            {Math.max(0, principal - repaid).toFixed(2)} XLM
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Footer: TX badge + receipt */}
-                      <div className="borrower-loan-card__footer">
-                        {hasTx ? (
-                          <a
-                            href={buildStellarTxVerificationUrl(txHash)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="borrower-loan-card__tx-badge borrower-loan-card__tx-badge--live"
-                          >
-                            ✦ Verify on Stellar ↗
-                          </a>
-                        ) : (
-                          <span className="borrower-loan-card__tx-badge borrower-loan-card__tx-badge--pending">
-                            {status === "requested" || status === "approved"
-                              ? "⏳ Pending Approval"
-                              : status === "funded"
-                              ? "⌛ Processing"
-                              : "— No TX"}
-                          </span>
-                        )}
-
-                        {status === "repaid" && (
-                          <a
-                            href={`/api/loans/${loanId}/receipt`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="borrower-loan-card__receipt-btn"
-                          >
-                            ↓ Receipt
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.875rem" }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid #eef0f8" }}>
+                    {["Loan ID", "Amount", "Status", "APR", "Due", "Stellar TX", "Receipt"].map((h) => (
+                      <th key={h} style={{ textAlign: "left", padding: "0.6rem 0.75rem", fontSize: "0.72rem", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {normalizedLoans.slice(0, 5).map((loan) => {
+                    const status = String(loan.effectiveStatus);
+                    const loanId = String(loan.id);
+                    const txHash = loanTxMap[loanId] ?? "";
+                    const hasTx  = isLikelyTxHash(txHash);
+                    return (
+                      <tr key={loanId} style={{ borderBottom: "1px solid #f9fafb" }}>
+                        <td style={{ padding: "0.75rem", fontFamily: "monospace", fontSize: "0.8rem", color: "#6b7280" }}>{loanId.slice(0, 8)}</td>
+                        <td style={{ padding: "0.75rem", fontWeight: 700 }}>{Number(loan.principal_amount).toFixed(2)} XLM</td>
+                          <td style={{ padding: "0.75rem" }}>
+                            <Badge variant={statusBadge(status)}>{status.toUpperCase()}</Badge>
+                          </td>
+                        <td style={{ padding: "0.75rem" }}>{(Number(loan.apr_bps ?? 0) / 100).toFixed(2)}%</td>
+                        <td style={{ padding: "0.75rem", whiteSpace: "nowrap" }}>
+                          {loan.due_at ? new Date(String(loan.due_at)).toLocaleDateString() : "—"}
+                        </td>
+                        <td style={{ padding: "0.75rem" }}>
+                          {hasTx ? (
+                            <a href={buildStellarTxVerificationUrl(txHash)} target="_blank" rel="noreferrer"
+                              style={{ fontSize: "0.78rem", color: "#22cf9d", fontWeight: 600, whiteSpace: "nowrap" }}>
+                              ✅ Verify ↗
+                            </a>
+                          ) : (
+                            <span style={{ fontSize: "0.75rem", opacity: 0.4, whiteSpace: "nowrap" }}>
+                              {status === "requested" || status === "approved" ? "⏳ Pending" : status === "funded" ? "✅ Recorded" : "—"}
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ padding: "0.75rem", whiteSpace: "nowrap" }}>
+                          {status === "repaid" ? (
+                            <a
+                              href={`/api/loans/${loanId}/receipt`}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "0.35rem",
+                                padding: "0.45rem 0.8rem",
+                                borderRadius: "0.45rem",
+                                background: "rgba(126,47,208,0.08)",
+                                color: "#7e2fd0",
+                                fontSize: "0.78rem",
+                                fontWeight: 700,
+                                textDecoration: "none",
+                              }}
+                            >
+                              Download PDF
+                            </a>
+                          ) : (
+                            <span style={{ fontSize: "0.75rem", opacity: 0.4 }}>-</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
