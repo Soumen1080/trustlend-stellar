@@ -625,9 +625,16 @@ impl LendingContract {
             panic!("Fee exceeds MAX_PLATFORM_FEE_BPS");
         }
 
+        let old_fee_bps = Self::get_platform_fee_bps(env.clone());
         env.storage()
             .instance()
             .set(&DataKey::PlatformFeeBps, &new_fee_bps);
+
+        // Emit event for indexers
+        env.events().publish(
+            (symbol_short!("admin"), symbol_short!("fee_upd")),
+            (symbol_short!("platform"), old_fee_bps, new_fee_bps),
+        );
     }
 
     pub fn get_uncollected_fees(env: Env) -> i128 {
