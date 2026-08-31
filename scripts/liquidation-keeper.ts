@@ -316,6 +316,23 @@ async function getLiquidationThresholdBps(
   return Number(result);
 }
 
+/**
+ * Check if a loan is eligible for liquidation (Issue #157).
+ * Returns true if the grace period has expired and the loan can be liquidated.
+ */
+async function checkLiquidationEligibility(
+  cfg: KeeperConfig,
+  loanId: number
+): Promise<boolean> {
+  const result = await invokeReadOnly({
+    contractId: cfg.lendingContractId,
+    method: "check_liquidation_eligibility",
+    args: [u32(loanId)],
+    sourceAddress: cfg.adminAddress,
+  });
+  return Boolean(result);
+}
+
 // ─── Candidate discovery ──────────────────────────────────────────────────────
 
 /** Resolve an on-chain loan id for a Supabase loan row from its funding ledger entry. */
@@ -476,6 +493,17 @@ export async function runLiquidationKeeper(
 
       if (!shouldLiquidate(ltvBps, thresholdBps)) {
         summary.healthy++;
+        continue;
+      }
+
+      // Check grace period eligibility (Issue #157)
+      // If health factor is below 1.0, borrower gets 12 hours to top up collateral
+      const isEligible = await checkLiquidationEligibility(cfg, loanId);
+      if (!isEligible) {
+        summary.skipped++;
+        console.log(
+          `[liquidation-keeper] Loan #${loanId}: undercollateralized but grace period active — skipping.`
+        );
         continue;
       }
 

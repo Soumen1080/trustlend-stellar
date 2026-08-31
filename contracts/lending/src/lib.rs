@@ -246,6 +246,8 @@ pub enum DataKey {
     LoanReputationTier(u32),
     /// Referral Rewards contract address (Issue #266)
     ReferralContract,
+    /// Grace period start timestamp for undercollateralized loans (Issue #157)
+    GracePeriodStart(u32),
 }
 
 /// Default platform fee = 1 % of interest (100 bps) until governance changes it.
@@ -280,6 +282,9 @@ const MIN_COLLATERAL_FACTOR_BPS: u32 = 1000;
 
 /// Minimum borrow amount constraint to prevent spam/dust loans (1 XLM = 10_000_000 stroops).
 pub const MIN_BORROW_AMOUNT: i128 = 10_000_000;
+
+/// Grace period before liquidation: 12 hours = 43,200 seconds (Issue #157)
+const GRACE_PERIOD_SECONDS: u64 = 43_200;
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
 
@@ -929,6 +934,27 @@ impl LendingContract {
 
         env.storage().persistent().set(&key, &new_entries);
 
+        // Check if health factor improved after deposit (Issue #157)
+        // If health factor is now >= 1.0, clear grace periods for all borrower's loans
+        let health_factor = Self::get_health_factor(env.clone(), borrower.clone());
+        if health_factor >= 10_000 {
+            // Health factor is healthy, clear any active grace periods
+            let loan_count = Self::get_borrower_loan_count(env.clone(), borrower.clone());
+            for i in 0..loan_count {
+                let loan_id = Self::get_borrower_loan_at(env.clone(), borrower.clone(), i);
+                let grace_key = DataKey::GracePeriodStart(loan_id);
+                if env.storage().persistent().has(&grace_key) {
+                    env.storage().persistent().remove(&grace_key);
+                    
+                    // Emit grace period cleared event
+                    env.events().publish(
+                        (symbol_short!("grace"), symbol_short!("cleared")),
+                        (loan_id, borrower.clone(), health_factor),
+                    );
+                }
+            }
+        }
+
         env.events().publish(
             (symbol_short!("collat"), symbol_short!("deposit")),
             (borrower, asset, amount),
@@ -1375,6 +1401,8 @@ impl LendingContract {
     }
 
     /// Mark a loan as defaulted (called by DefaultManagementContract or admin).
+    /// Now includes grace period check (Issue #157) - borrowers get 12 hours
+    /// to top up collateral before liquidation can proceed.
     pub fn mark_defaulted(env: Env, caller: Address, loan_id: u32) {
         caller.require_auth();
         Self::assert_admin(&env, &caller);
@@ -1384,13 +1412,26 @@ impl LendingContract {
         if loan.status != LoanStatus::Active {
             panic!("Only ACTIVE loans can be defaulted");
         }
+
+        // Check if loan is eligible for liquidation (respects 12-hour grace period)
+        if !Self::check_liquidation_eligibility(env.clone(), loan_id) {
+            panic!("Loan is not eligible for liquidation yet - grace period active or health factor is healthy");
+        }
+
         loan.status = LoanStatus::Defaulted;
         env.storage()
             .persistent()
             .set(&DataKey::Loan(loan_id), &loan);
 
-        env.events()
-            .publish((symbol_short!("loan"), symbol_short!("default")), loan_id);
+        // Clean up grace period tracking since loan is now defaulted
+        env.storage().persistent().remove(&DataKey::GracePeriodStart(loan_id));
+
+        // Emit liquidation event with health factor context
+        let health_factor = Self::get_health_factor(env.clone(), loan.borrower.clone());
+        env.events().publish(
+            (symbol_short!("loan"), symbol_short!("default")),
+            (loan_id, health_factor),
+        );
     }
 
     // ── Rate model switching ─────────────────────────────────────────────────
@@ -1639,6 +1680,114 @@ impl LendingContract {
             }
         }
         total_debt
+    }
+
+    /// Calculate the health factor for a borrower.
+    /// 
+    /// Health Factor = (borrowing_power * 10_000) / total_active_debt
+    /// 
+    /// - Health Factor >= 10_000 means the position is healthy (>= 1.0)
+    /// - Health Factor < 10_000 means undercollateralized (< 1.0)
+    /// - Returns u32::MAX if total_debt is 0 (no debt = infinitely healthy)
+    /// 
+    /// Example: If borrowing_power = 100 XLM and debt = 80 XLM,
+    /// health_factor = (100 * 10_000) / 80 = 12_500 (1.25x)
+    pub fn get_health_factor(env: Env, borrower: Address) -> u32 {
+        let total_debt = Self::get_total_active_debt_of_borrower(&env, &borrower);
+        
+        // No debt means infinitely healthy
+        if total_debt <= 0 {
+            return u32::MAX;
+        }
+        
+        let entries = Self::get_user_collateral_entries(env.clone(), borrower);
+        let borrowing_power = Self::compute_borrowing_power_from_entries(&env, &entries);
+        
+        // If no borrowing power but has debt, health factor is 0
+        if borrowing_power <= 0 {
+            return 0;
+        }
+        
+        // Calculate: (borrowing_power * 10_000) / total_debt
+        let numerator = borrowing_power
+            .checked_mul(10_000)
+            .expect("Overflow calculating health factor numerator");
+        
+        let health_factor = numerator
+            .checked_div(total_debt)
+            .expect("Division by zero in health factor");
+        
+        // Cap at u32::MAX for very healthy positions
+        if health_factor > u32::MAX as i128 {
+            u32::MAX
+        } else {
+            health_factor as u32
+        }
+    }
+
+    /// Check if a loan is eligible for liquidation (Issue #157).
+    /// 
+    /// Returns true if the loan can be liquidated, false otherwise.
+    /// 
+    /// Liquidation eligibility requirements:
+    /// 1. The loan must have an active borrower with health factor < 1.0 (< 10_000 bps)
+    /// 2. If this is the first time undercollateralized, grace period starts
+    /// 3. After 12-hour grace period expires, liquidation is allowed
+    /// 
+    /// This gives borrowers time to top up collateral before liquidation.
+    pub fn check_liquidation_eligibility(env: Env, loan_id: u32) -> bool {
+        let loan = Self::get_loan(env.clone(), loan_id);
+        
+        // Only active loans can be liquidated
+        if loan.status != LoanStatus::Active {
+            return false;
+        }
+        
+        let health_factor = Self::get_health_factor(env.clone(), loan.borrower.clone());
+        
+        // If health factor >= 1.0 (10_000 bps), position is healthy
+        if health_factor >= 10_000 {
+            // Clear any existing grace period since position is now healthy
+            if env.storage().persistent().has(&DataKey::GracePeriodStart(loan_id)) {
+                env.storage().persistent().remove(&DataKey::GracePeriodStart(loan_id));
+            }
+            return false;
+        }
+        
+        // Health factor < 1.0, check grace period
+        let now = env.ledger().timestamp();
+        let grace_start: Option<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::GracePeriodStart(loan_id));
+        
+        match grace_start {
+            None => {
+                // First time undercollateralized - start grace period
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::GracePeriodStart(loan_id), &now);
+                
+                // Emit grace period start event
+                env.events().publish(
+                    (symbol_short!("grace"), symbol_short!("start")),
+                    (loan_id, loan.borrower.clone(), health_factor, now),
+                );
+                
+                false // Not eligible yet, grace period just started
+            }
+            Some(start_time) => {
+                let elapsed = now.saturating_sub(start_time);
+                
+                if elapsed >= GRACE_PERIOD_SECONDS {
+                    // Grace period expired, loan is eligible for liquidation
+                    true
+                } else {
+                    // Still within grace period
+                    false
+                }
+            }
+        }
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
