@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- `fast-uri` [GHSA-83f7-4hh3-vchq](https://github.com/advisories/GHSA-83f7-4hh3-vchq)
+  (`mailto:` header injection, Dependabot alert #117) is verified patched:
+  the `overrides` pin resolves the only copy to `4.2.2` (fixed in `4.1.1`) and
+  `npm audit` no longer reports it. Its only path is dev tooling
+  (`@commitlint/config-validator` → `ajv@8`), so nothing shipped was exposed.
+  A new test fails CI if the override is removed or the lockfile ever
+  resolves a vulnerable copy again.
 - Protocol fee collection now moves real tokens and is access controlled.
   `lending::collect_fees` previously zeroed `UncollectedFees` for any caller
   without transferring anything. It is now callable only by the configured
