@@ -57,6 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reject every call with 500 instead of running unauthenticated. The
   unauthenticated bypass is limited to `NODE_ENV=development`, and all routes
   share one constant-time check in `lib/auth/cron.ts` (#331).
+- Babel [GHSA-968p-4wvh-cqc8](https://github.com/advisories/GHSA-968p-4wvh-cqc8)
+  (CVE-2025-27789, Dependabot alert #42: quadratic-time `.replace` helper
+  generated for named capturing groups) is verified patched. The affected
+  packages resolve to `@babel/helpers` 8.0.7 and `@babel/runtime` 7.29.7
+  (fixed in 7.26.10 / 8.0.0-alpha.17), `@babel/runtime-corejs2/3` are not
+  installed, and `npm audit` no longer reports it. A new test fails CI if any
+  resolved copy becomes vulnerable again.
 
 ### Added
 - Lender dashboard "Pool Utilization" chart: a responsive 30-day area chart
