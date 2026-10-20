@@ -147,7 +147,8 @@ The full walkthrough — Rust/Soroban toolchain, building and deploying contract
 
 | Command | What it does |
 |---|---|
-| `npm run dev` / `npm run build` | Next.js dev server / production build |
+| `npm run dev` / `npm run build` | Loopback-only Next.js dev server / production build |
+| `npm run dev:lan` | Explicitly expose the dev server to the local network for device testing |
 | `npm test` · `npm run test:coverage` | Vitest unit tests (660+) |
 | `npm run test:e2e` | Playwright end-to-end tests |
 | `npm run lint` · `npx tsc --noEmit` | ESLint / type check |
