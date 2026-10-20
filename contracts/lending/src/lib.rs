@@ -312,6 +312,9 @@ const MIN_COLLATERAL_FACTOR_BPS: u32 = 1000;
 
 /// Minimum borrow amount constraint to prevent spam/dust loans (1 XLM = 10_000_000 stroops).
 pub const MIN_BORROW_AMOUNT: i128 = 10_000_000;
+/// Loan requests must charge a non-zero, bounded protocol APR.
+pub const MIN_INTEREST_RATE_BPS: u32 = 100;
+pub const MAX_INTEREST_RATE_BPS: u32 = 5_000;
 
 /// Grace period before liquidation: 12 hours = 43,200 seconds (Issue #157)
 const GRACE_PERIOD_SECONDS: u64 = 43_200;
@@ -1248,6 +1251,11 @@ impl LendingContract {
         }
         if amount < MIN_BORROW_AMOUNT {
             panic!("Loan amount below minimum borrow threshold");
+        }
+        if interest_rate_bps < MIN_INTEREST_RATE_BPS
+            || interest_rate_bps > MAX_INTEREST_RATE_BPS
+        {
+            panic!("Interest rate is outside protocol bounds");
         }
 
         let reputation: Address = env
