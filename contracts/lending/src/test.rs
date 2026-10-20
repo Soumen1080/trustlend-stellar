@@ -2171,6 +2171,29 @@ fn test_create_loan_request_checks_borrowing_power() {
     );
 }
 
+/// Zero interest cannot be used to bypass the protocol's minimum APR.
+#[test]
+fn test_create_loan_request_rejects_interest_below_protocol_minimum() {
+    let (env, contract_id, _admin, borrower, asset_a, _asset_b) = setup_multi_collateral();
+    let client = LendingContractClient::new(&env, &contract_id);
+    let result = client.try_create_loan_request(
+        &borrower,
+        &LoanRequestInput {
+            amount: 10_000_0000000,
+            duration_days: 30,
+            interest_rate_bps: 0,
+            max_loan_amount: 100_000_0000000,
+            collateral_entries: vec![
+                &env,
+                CollateralEntry { asset: asset_a, amount: 10_000_0000000 },
+            ],
+            rate_model: InterestRateModel::Fixed,
+            reputation_tier: 0,
+        },
+    );
+    assert!(result.is_err());
+}
+
 /// Create loan request with multiple collateral assets.
 #[test]
 fn test_create_loan_request_with_multi_asset_collateral() {
