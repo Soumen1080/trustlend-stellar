@@ -174,9 +174,15 @@ export function verifyWebhookSignature(
 ): boolean {
   const { webhookSecret } = getConfig();
   if (!webhookSecret) {
-    // In dev mode (no secret configured) skip verification but log a warning
-    console.warn("[KYC] SUMSUB_WEBHOOK_SECRET is not set — skipping signature verification in dev mode");
-    return true;
+    // Only permit the convenience bypass in an explicitly local development
+    // environment. Missing deployment configuration must never authenticate a
+    // webhook request.
+    if (process.env.NODE_ENV === "development") {
+      console.warn("[KYC] SUMSUB_WEBHOOK_SECRET is not set — skipping signature verification in development");
+      return true;
+    }
+    console.error("[KYC] SUMSUB_WEBHOOK_SECRET is not set — rejecting webhook");
+    return false;
   }
 
   const expected = crypto
