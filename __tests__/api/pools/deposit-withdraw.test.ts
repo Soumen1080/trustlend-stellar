@@ -39,10 +39,10 @@ import { POST as deposit } from "@/app/api/pools/deposit/route";
 import { POST as withdraw } from "@/app/api/pools/withdraw/route";
 import { PlatformWalletError } from "@/lib/stellar/platform-wallet";
 
-function request(path: string, body: Record<string, unknown>) {
+function request(path: string, body: Record<string, unknown>, idempotencyKey = "test-withdrawal-request-1") {
   return new NextRequest(`http://localhost${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Idempotency-Key": "test-withdrawal-request-1" },
+    headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
     body: JSON.stringify(body),
   });
 }
@@ -200,10 +200,19 @@ describe("POST /api/pools/withdraw", () => {
     queueWithdrawReads(duplicateDb);
     duplicateDb.queue([]); // unique index rejects duplicate key
     mockGetDb.mockReturnValueOnce(firstDb).mockReturnValueOnce(duplicateDb);
-    mockPayout.mockResolvedValue({ hash: HASH, source: PLATFORM });
+    let releasePayout!: (value: { hash: string; source: string }) => void;
+    let signalPayoutStarted!: () => void;
+    const payoutStarted = new Promise<void>((resolve) => { signalPayoutStarted = resolve; });
+    mockPayout.mockImplementation(() => {
+      signalPayoutStarted();
+      return new Promise((resolve) => { releasePayout = resolve; });
+    });
 
-    const first = await withdraw(request("/api/pools/withdraw", { positionId: POSITION_ID, amount: 40 }));
+    const firstPromise = withdraw(request("/api/pools/withdraw", { positionId: POSITION_ID, amount: 40 }));
+    await payoutStarted;
     const duplicate = await withdraw(request("/api/pools/withdraw", { positionId: POSITION_ID, amount: 40 }));
+    releasePayout({ hash: HASH, source: PLATFORM });
+    const first = await firstPromise;
 
     expect(first.status).toBe(200);
     expect(duplicate.status).toBe(409);
