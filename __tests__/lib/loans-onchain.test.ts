@@ -184,7 +184,7 @@ describe("verifyOnchainLoanRequest", () => {
     borrowerWallets: [BORROWER],
     amountXlm: 100,
     durationDays: 30,
-    aprBps: 1200,
+    interestRateBps: 1200,
   };
 
   beforeEach(() => {
@@ -257,14 +257,15 @@ describe("verifyOnchainLoanRequest", () => {
     expect(await verifyOnchainLoanRequest({ db, ...params })).toMatchObject({ ok: false, status: 409 });
   });
 
-  it("rejects an on-chain interest rate that differs from the quoted APR", async () => {
+  it("rejects an on-chain loan with an interest rate different from the quoted APR", async () => {
     const db = createFakeDb();
+    db.queue([]);
     mocks.verifyInvocation.mockResolvedValue({ ok: true, returnValue: 5 });
     mocks.readLoan.mockResolvedValue(onchainLoan({ status: "Pending", interestRateBps: 0 }));
 
     const out = await verifyOnchainLoanRequest({ db, ...params });
 
-    expect(out).toMatchObject({ ok: false, status: 422, reason: expect.stringMatching(/quoted APR/) });
+    expect(out).toMatchObject({ ok: false, status: 422, reason: expect.stringContaining("quoted APR") });
     expect(db.calls.some((call) => call.method === "select")).toBe(false);
   });
 });

@@ -183,7 +183,7 @@ export async function verifyOnchainLoanRequest(params: {
   borrowerWallets: string[];
   amountXlm: number;
   durationDays: number;
-  aprBps: number;
+  interestRateBps: number;
 }): Promise<LoanRequestCheck> {
   if (!isOnchainLifecycleRequired()) return { ok: true, metadata: {} };
 
@@ -239,7 +239,7 @@ export async function verifyOnchainLoanRequest(params: {
   if (loan.durationDays !== params.durationDays) {
     return { ok: false, status: 422, reason: "On-chain loan duration does not match the requested duration" };
   }
-  if (loan.interestRateBps !== params.aprBps) {
+  if (loan.interestRateBps !== params.interestRateBps) {
     return { ok: false, status: 422, reason: "On-chain loan interest rate does not match the quoted APR" };
   }
   if (loan.status !== "Pending") {

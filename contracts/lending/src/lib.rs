@@ -265,6 +265,8 @@ pub enum DataKey {
     OraclePriceUpdatedAt(Address),
     /// TWAP fallback price for a collateral asset.
     OracleTwapPrice(Address),
+    /// Last ledger timestamp at which an oracle price was posted.
+    OraclePriceUpdatedAt(Address),
     /// Borrower Loyalty Rewards contract address
     LoyaltyContract,
     /// Reputation tier per loan (0=None, 1=Beginner, ..., 4=Platinum)
@@ -293,6 +295,10 @@ const MAX_PLATFORM_FEE_BPS: u32 = 1000;
 const DEFAULT_FLASH_LOAN_FEE_BPS: u32 = 9;
 /// Safety ceiling on the flash-loan fee (500 bps = 5 %).
 const MAX_FLASH_LOAN_FEE_BPS: u32 = 500;
+/// Lowest annual percentage rate accepted for a loan request (1.00%).
+const MIN_INTEREST_RATE_BPS: u32 = 100;
+/// Oracle prices older than this are not safe for collateral valuation.
+const ORACLE_PRICE_MAX_AGE_SECONDS: u64 = 300;
 
 /// Fee for switching rate models: 0.5% of remaining debt (50 bps).
 const RATE_SWITCH_FEE_BPS: u32 = 50;
@@ -900,6 +906,11 @@ impl LendingContract {
         if prices.is_empty() {
             panic!("At least one oracle price sample is required");
         }
+        for price in prices.iter() {
+            if price <= 0 {
+                panic!("Oracle price samples must be positive");
+            }
+        }
 
         if !env
             .storage()
@@ -912,10 +923,9 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::OraclePriceSamples(asset.clone()), &prices);
-        env.storage().instance().set(
-            &DataKey::OraclePriceUpdatedAt(asset),
-            &env.ledger().timestamp(),
-        );
+        env.storage()
+            .instance()
+            .set(&DataKey::OraclePriceUpdatedAt(asset), &env.ledger().timestamp());
     }
 
     /// Store a TWAP fallback price for an asset.
@@ -938,10 +948,9 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::OracleTwapPrice(asset.clone()), &price);
-        env.storage().instance().set(
-            &DataKey::OraclePriceUpdatedAt(asset),
-            &env.ledger().timestamp(),
-        );
+        env.storage()
+            .instance()
+            .set(&DataKey::OraclePriceUpdatedAt(asset), &env.ledger().timestamp());
     }
 
     // ── Asset collateral configuration (multisig-gated) ───────────────────────
@@ -954,8 +963,7 @@ impl LendingContract {
     /// can be borrowed, in basis-points (e.g. 8000 = 80% LTV).
     /// Clamped to [MIN_COLLATERAL_FACTOR_BPS, MAX_COLLATERAL_FACTOR_BPS].
     ///
-    /// `has_price_oracle` — the asset must have an active oracle feed before
-    /// it can be used in collateral valuation.
+    /// `has_price_oracle` — must be true to use this asset as collateral.
     ///
     /// `volatility_bps` — estimated annualized volatility in bps, used in
     /// dynamic liquidation threshold calculations.
@@ -1280,6 +1288,9 @@ impl LendingContract {
 
         if amount > max_loan_amount {
             panic!("Amount exceeds reputation-based limit");
+        }
+        if interest_rate_bps < MIN_INTEREST_RATE_BPS {
+            panic!("Interest rate is below the protocol minimum");
         }
         if duration_days == 0 || duration_days > 365 {
             panic!("Duration must be between 1 and 365 days");
@@ -1971,7 +1982,7 @@ impl LendingContract {
     /// Borrowing power = sum over entries of:
     ///   (amount * price * collateral_factor_bps) / (PRICE_PRECISION * 10_000)
     ///
-    /// Where `price` is a fresh, registered oracle quote.
+    /// Where `price` is a fresh oracle price.
     fn compute_borrowing_power_from_entries(env: &Env, entries: &Vec<CollateralEntry>) -> i128 {
         let mut total_power: i128 = 0;
         for entry in entries.iter() {
@@ -2003,20 +2014,20 @@ impl LendingContract {
     /// For example, if 1 XLM = $0.10 USD, the price would be:
     ///   (1 XLM in stroops = 10_000_000) * PRICE_PRECISION / 1 = 10_000_000 * 10_000_000 / 1
     ///
-    /// Only a recent quote for an asset with a configured oracle can be used.
-    /// Missing or stale prices fail closed instead of assuming face value.
     fn get_asset_price(env: &Env, asset: &Address, config: &AssetCollateralConfig) -> i128 {
-        if !config.has_price_oracle || !env.storage().instance().has(&DataKey::PriceOracle) {
-            panic!("Collateral asset has no active price oracle");
+        if !config.has_price_oracle {
+            panic!("Collateral asset requires a configured price oracle");
         }
+
         let updated_at: u64 = env
             .storage()
             .instance()
             .get(&DataKey::OraclePriceUpdatedAt(asset.clone()))
             .expect("No oracle price registered for collateral asset");
-        if env.ledger().timestamp().saturating_sub(updated_at) > MAX_COLLATERAL_PRICE_AGE_SECS {
-            panic!("Collateral oracle price is stale");
+        if env.ledger().timestamp() > updated_at + ORACLE_PRICE_MAX_AGE_SECONDS {
+            panic!("Oracle price for collateral asset is stale");
         }
+
         let samples: Vec<i128> = env
             .storage()
             .instance()
@@ -2025,11 +2036,16 @@ impl LendingContract {
         if !samples.is_empty() {
             return Self::median_price(env, &samples);
         }
-        env.storage()
+
+        if let Some(twap_price) = env
+            .storage()
             .instance()
             .get::<DataKey, i128>(&DataKey::OracleTwapPrice(asset.clone()))
-            .filter(|price| *price > 0)
-            .expect("No oracle price registered for collateral asset")
+        {
+            return twap_price;
+        }
+
+        panic!("No oracle price registered for collateral asset");
     }
 
     fn median_price(env: &Env, prices: &Vec<i128>) -> i128 {

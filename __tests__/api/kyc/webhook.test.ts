@@ -193,7 +193,8 @@ describe("POST /api/kyc/webhook", () => {
     expect(await response.json()).toEqual({ received: true });
   });
 
-  it("accepts the webhook in dev mode when no webhook secret is configured", async () => {
+  it("accepts the webhook only in development when no webhook secret is configured", async () => {
+    process.env.NODE_ENV = "development";
     delete process.env.SUMSUB_WEBHOOK_SECRET;
     process.env.NODE_ENV = "development";
     primeUpdates(1);
@@ -204,16 +205,16 @@ describe("POST /api/kyc/webhook", () => {
     expect(response.status).toBe(200);
   });
 
-  it("fails closed when the webhook secret is missing in production", async () => {
-    delete process.env.SUMSUB_WEBHOOK_SECRET;
+  it("rejects the webhook in production when no webhook secret is configured", async () => {
     process.env.NODE_ENV = "production";
-    primeUpdates(1);
+    delete process.env.SUMSUB_WEBHOOK_SECRET;
     const body = JSON.stringify(reviewedPayload());
 
     const response = await POST(webhookRequest(body, ""));
 
     expect(response.status).toBe(401);
     expect(updateCount()).toBe(0);
+    expect(seededReputation()).toBe(false);
   });
 
   it("serves a health check on GET", async () => {
