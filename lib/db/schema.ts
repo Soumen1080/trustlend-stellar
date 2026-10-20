@@ -488,6 +488,9 @@ export const ledgerTransactions = pgTable(
   (t) => [
     index("idx_ledger_transactions_user_id_created_at").on(t.userId, t.createdAt),
     index("idx_ledger_transactions_status").on(t.status),
+    uniqueIndex("idx_ledger_withdrawal_idempotency")
+      .on(t.userId, sql`(${t.metadata}->>'withdrawalIdempotencyKey')`)
+      .where(sql`${t.category} = 'withdrawal' AND ${t.metadata} ? 'withdrawalIdempotencyKey'`),
   ],
 );
 
