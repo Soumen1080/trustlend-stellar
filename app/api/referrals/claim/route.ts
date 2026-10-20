@@ -5,6 +5,7 @@ import { sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { normalizeReferralCode } from "@/lib/referrals/codes";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
+import { isBoundedString } from "@/lib/http/request-validation";
 
 /**
  * POST /api/referrals/claim
@@ -34,7 +35,14 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const code = normalizeReferralCode((body as { code?: unknown }).code);
+    const rawCode = (body as { code?: unknown }).code;
+    if (!isBoundedString(rawCode, 64)) {
+      return NextResponse.json(
+        { error: "A valid referral code is required" },
+        { status: 400 },
+      );
+    }
+    const code = normalizeReferralCode(rawCode);
 
     if (!code) {
       return NextResponse.json(
