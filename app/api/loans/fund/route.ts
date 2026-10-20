@@ -10,6 +10,7 @@ import { qualifyReferralForLoan } from "@/lib/referrals/qualify";
 import { PAYMENT_MEMO, verifyPaymentTransaction } from "@/lib/stellar/verify-payment";
 import { activateFundedLoanOnchain } from "@/lib/loans/onchain";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
+import { isBoundedString } from "@/lib/http/request-validation";
 
 /**
  * POST /api/loans/fund
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest) {
       approveTxHash?: string;
     };
 
-    if (!loanId) {
+    if (!isBoundedString(loanId, 128)) {
       return NextResponse.json({ error: "loanId is required" }, { status: 400 });
     }
     if (!txHash || txHash.trim().length < 10) {
@@ -66,6 +67,9 @@ export async function POST(request: NextRequest) {
     }
 
     const normalizedTxHash = txHash.trim();
+    if (!isBoundedString(normalizedTxHash, 128) || !isBoundedString(lenderAddress, 128)) {
+      return NextResponse.json({ error: "Invalid funding request" }, { status: 400 });
+    }
 
     // ── Replay guard ─────────────────────────────────────────────────────────
     // Dedupe on the transaction hash, not on the loan: a loan may legitimately
