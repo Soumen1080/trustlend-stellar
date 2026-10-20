@@ -261,6 +261,8 @@ pub enum DataKey {
     PriceOracle,
     /// Aggregated oracle price samples for a collateral asset.
     OraclePriceSamples(Address),
+    /// Ledger timestamp at which the asset's current oracle price was posted.
+    OraclePriceUpdatedAt(Address),
     /// TWAP fallback price for a collateral asset.
     OracleTwapPrice(Address),
     /// Borrower Loyalty Rewards contract address
@@ -297,6 +299,8 @@ const RATE_SWITCH_FEE_BPS: u32 = 50;
 
 /// Cooldown between rate switches: 24 hours in seconds.
 const RATE_SWITCH_COOLDOWN_SECS: u64 = 86_400;
+/// Oracle collateral prices older than this cannot be used for borrowing.
+const MAX_COLLATERAL_PRICE_AGE_SECS: u64 = 3_600;
 
 /// Default collateral factor for assets without explicit config: 75% LTV.
 const DEFAULT_COLLATERAL_FACTOR_BPS: u32 = 7500;
@@ -905,6 +909,10 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::OraclePriceSamples(asset.clone()), &prices);
+        env.storage().instance().set(
+            &DataKey::OraclePriceUpdatedAt(asset),
+            &env.ledger().timestamp(),
+        );
     }
 
     /// Store a TWAP fallback price for an asset.
@@ -927,6 +935,10 @@ impl LendingContract {
         env.storage()
             .instance()
             .set(&DataKey::OracleTwapPrice(asset.clone()), &price);
+        env.storage().instance().set(
+            &DataKey::OraclePriceUpdatedAt(asset),
+            &env.ledger().timestamp(),
+        );
     }
 
     // ── Asset collateral configuration (multisig-gated) ───────────────────────
@@ -939,9 +951,8 @@ impl LendingContract {
     /// can be borrowed, in basis-points (e.g. 8000 = 80% LTV).
     /// Clamped to [MIN_COLLATERAL_FACTOR_BPS, MAX_COLLATERAL_FACTOR_BPS].
     ///
-    /// `has_price_oracle` — if true, the contract expects a price feed from
-    /// the authorized oracle; if false, the asset is valued at face value
-    /// (i.e. 1 unit = 1 USD) for borrowing power calculations.
+    /// `has_price_oracle` — the asset must have an active oracle feed before
+    /// it can be used in collateral valuation.
     ///
     /// `volatility_bps` — estimated annualized volatility in bps, used in
     /// dynamic liquidation threshold calculations.
@@ -1952,8 +1963,7 @@ impl LendingContract {
     /// Borrowing power = sum over entries of:
     ///   (amount * price * collateral_factor_bps) / (PRICE_PRECISION * 10_000)
     ///
-    /// Where `price` is the oracle price if configured, or PRICE_PRECISION (1.0)
-    /// if no oracle is configured.
+    /// Where `price` is a fresh, registered oracle quote.
     fn compute_borrowing_power_from_entries(env: &Env, entries: &Vec<CollateralEntry>) -> i128 {
         let mut total_power: i128 = 0;
         for entry in entries.iter() {
@@ -1985,36 +1995,33 @@ impl LendingContract {
     /// For example, if 1 XLM = $0.10 USD, the price would be:
     ///   (1 XLM in stroops = 10_000_000) * PRICE_PRECISION / 1 = 10_000_000 * 10_000_000 / 1
     ///
-    /// But for collateral valuation, we use a simpler scheme:
-    ///   - If the asset has an oracle, price is posted by the oracle
-    ///   - If not, price = PRICE_PRECISION (i.e. face value = 1.0 base unit per asset unit)
-    ///
-    /// For now, without a live oracle, all assets are valued at face value (1:1).
-    /// This still allows testing the multi-collateral framework with different
-    /// collateral factors.
+    /// Only a recent quote for an asset with a configured oracle can be used.
+    /// Missing or stale prices fail closed instead of assuming face value.
     fn get_asset_price(env: &Env, asset: &Address, config: &AssetCollateralConfig) -> i128 {
-        if config.has_price_oracle {
-            let samples: Vec<i128> = env
-                .storage()
-                .instance()
-                .get(&DataKey::OraclePriceSamples(asset.clone()))
-                .unwrap_or(Vec::new(env));
-
-            if !samples.is_empty() {
-                return Self::median_price(env, &samples);
-            }
-
-            if let Some(twap_price) = env
-                .storage()
-                .instance()
-                .get::<DataKey, i128>(&DataKey::OracleTwapPrice(asset.clone()))
-            {
-                return twap_price;
-            }
+        if !config.has_price_oracle || !env.storage().instance().has(&DataKey::PriceOracle) {
+            panic!("Collateral asset has no active price oracle");
         }
-
-        // No oracle or no live price data — fall back to face value.
-        PRICE_PRECISION
+        let updated_at: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::OraclePriceUpdatedAt(asset.clone()))
+            .expect("No oracle price registered for collateral asset");
+        if env.ledger().timestamp().saturating_sub(updated_at) > MAX_COLLATERAL_PRICE_AGE_SECS {
+            panic!("Collateral oracle price is stale");
+        }
+        let samples: Vec<i128> = env
+            .storage()
+            .instance()
+            .get(&DataKey::OraclePriceSamples(asset.clone()))
+            .unwrap_or(Vec::new(env));
+        if !samples.is_empty() {
+            return Self::median_price(env, &samples);
+        }
+        env.storage()
+            .instance()
+            .get::<DataKey, i128>(&DataKey::OracleTwapPrice(asset.clone()))
+            .filter(|price| *price > 0)
+            .expect("No oracle price registered for collateral asset")
     }
 
     fn median_price(env: &Env, prices: &Vec<i128>) -> i128 {
