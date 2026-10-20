@@ -89,6 +89,7 @@
     "axios": ">=1.18.0",
     "brace-expansion": "1.1.18",
     "uuid": "11.1.1",
+    "elliptic": ">=6.6.1",
     "esbuild": ">=0.25.0",
     "@babel/core": ">=7.29.6"
   }
