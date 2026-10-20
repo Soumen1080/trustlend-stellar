@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildChallenge, SiwsError } from "@/lib/auth/siws-server";
 import { enforceRouteRateLimit } from "@/lib/rate-limit";
+import { isValidStellarAddress } from "@/lib/http/request-validation";
 
 /**
  * POST /api/auth/siws/challenge
@@ -17,8 +18,8 @@ export async function POST(request: NextRequest) {
 
   try {
     const { address } = (await request.json()) as { address?: string };
-    if (!address) {
-      return NextResponse.json({ error: "address is required" }, { status: 400 });
+    if (!isValidStellarAddress(address)) {
+      return NextResponse.json({ error: "A valid Stellar address is required" }, { status: 400 });
     }
 
     const { transaction, networkPassphrase } = buildChallenge(address);
