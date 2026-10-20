@@ -56,6 +56,16 @@ jobs:
             exit 1
           fi
 
+      - name: Verify Stellar XDR version
+        working-directory: ./contracts
+        shell: bash
+        run: |
+          xdr_version="$(cargo tree -i stellar-xdr --depth 0 | sed -n 's/^stellar-xdr v//p')"
+          if [ -z "$xdr_version" ] || [ "$(printf '%s\n21.2.0\n' "$xdr_version" | sort -V | head -n1)" != "21.2.0" ]; then
+            echo "stellar-xdr must resolve to 21.2.0 or newer; found: ${xdr_version:-unknown}"
+            exit 1
+          fi
+
       - name: Run Cargo Audit
         working-directory: ./contracts
         run: cargo audit
