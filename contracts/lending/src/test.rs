@@ -29,6 +29,14 @@ fn setup() -> (Env, Address, Address, Address, Address) {
 
     let collateral_asset = Address::generate(&env);
     client.whitelist_asset(&admin, &collateral_asset);
+    let price_oracle = admin.clone();
+    client.set_price_oracle(&admin, &price_oracle);
+    client.set_asset_collateral_config(
+        &admin,
+        &collateral_asset,
+        &AssetCollateralConfig { collateral_factor_bps: 7500, has_price_oracle: true, volatility_bps: 0 },
+    );
+    client.set_asset_oracle_prices(&price_oracle, &collateral_asset, &vec![&env, PRICE_PRECISION]);
 
     link_reputation(&env, &client, &admin, &borrower);
 
@@ -235,7 +243,7 @@ fn test_no_overflow_at_maximum_valid_inputs() {
         &collateral_asset,
         &AssetCollateralConfig {
             collateral_factor_bps: 9500,
-            has_price_oracle: false,
+            has_price_oracle: true,
             volatility_bps: 0,
         },
     );
@@ -1672,6 +1680,16 @@ fn setup_multi_collateral() -> (Env, Address, Address, Address, Address, Address
     let asset_b = env.register_stellar_asset_contract_v2(asset_b_admin).address();
     client.whitelist_asset(&admin, &asset_a);
     client.whitelist_asset(&admin, &asset_b);
+    let price_oracle = admin.clone();
+    client.set_price_oracle(&admin, &price_oracle);
+    for asset in [&asset_a, &asset_b] {
+        client.set_asset_collateral_config(
+            &admin,
+            asset,
+            &AssetCollateralConfig { collateral_factor_bps: 7500, has_price_oracle: true, volatility_bps: 0 },
+        );
+        client.set_asset_oracle_prices(&price_oracle, asset, &vec![&env, PRICE_PRECISION]);
+    }
 
     // Give each test borrower ample funds so deposits exercise real transfers.
     let funding = 1_000_000_000_000_000i128;
@@ -1914,7 +1932,7 @@ fn test_get_borrowing_power_single_asset() {
         &asset_a,
         &AssetCollateralConfig {
             collateral_factor_bps: 8000, // 80% LTV
-            has_price_oracle: false,
+            has_price_oracle: true,
             volatility_bps: 500, // 5% vol
         },
     );
@@ -1941,7 +1959,7 @@ fn test_get_borrowing_power_multiple_assets() {
         &asset_b,
         &AssetCollateralConfig {
             collateral_factor_bps: 5000, // 50% LTV
-            has_price_oracle: false,
+            has_price_oracle: true,
             volatility_bps: 2000, // 20% vol
         },
     );
@@ -1977,7 +1995,7 @@ fn test_set_asset_collateral_config_non_whitelisted_rejected() {
         &random_asset,
         &AssetCollateralConfig {
             collateral_factor_bps: 8000,
-            has_price_oracle: false,
+            has_price_oracle: true,
             volatility_bps: 500,
         },
     );
@@ -1995,7 +2013,7 @@ fn test_set_asset_collateral_config_clamps_to_bounds() {
         &asset_a,
         &AssetCollateralConfig {
             collateral_factor_bps: 9600, // Above MAX
-            has_price_oracle: false,
+            has_price_oracle: true,
             volatility_bps: 500,
         },
     );
@@ -2009,7 +2027,7 @@ fn test_set_asset_collateral_config_clamps_to_bounds() {
         &asset_a,
         &AssetCollateralConfig {
             collateral_factor_bps: 500, // Below MIN
-            has_price_oracle: false,
+            has_price_oracle: true,
             volatility_bps: 500,
         },
     );
@@ -2095,6 +2113,32 @@ fn test_price_oracle_twap_fallback_is_used() {
     assert_eq!(value, 2_000_0000000);
 }
 
+/// Collateral without an enabled oracle quote must never be assigned face value.
+#[test]
+#[should_panic(expected = "Collateral asset has no active price oracle")]
+fn test_collateral_without_oracle_price_is_rejected() {
+    let (env, contract_id, admin, borrower, asset_a, _asset_b) = setup_multi_collateral();
+    let client = LendingContractClient::new(&env, &contract_id);
+    client.set_asset_collateral_config(
+        &admin,
+        &asset_a,
+        &AssetCollateralConfig { collateral_factor_bps: 7500, has_price_oracle: false, volatility_bps: 0 },
+    );
+    client.deposit_collateral(&borrower, &asset_a, &1_000_0000000);
+    client.get_total_collateral_value(&borrower);
+}
+
+/// A quote stops being usable after the configured freshness window.
+#[test]
+#[should_panic(expected = "Collateral oracle price is stale")]
+fn test_stale_collateral_oracle_price_is_rejected() {
+    let (env, contract_id, _admin, borrower, asset_a, _asset_b) = setup_multi_collateral();
+    let client = LendingContractClient::new(&env, &contract_id);
+    client.deposit_collateral(&borrower, &asset_a, &1_000_0000000);
+    env.ledger().set_timestamp(MAX_COLLATERAL_PRICE_AGE_SECS + 1);
+    client.get_total_collateral_value(&borrower);
+}
+
 /// Only multisig admin can set the price oracle.
 #[test]
 #[should_panic(expected = "Unauthorised")]
@@ -2120,7 +2164,7 @@ fn test_set_asset_collateral_config_non_admin_rejected() {
         &asset_a,
         &AssetCollateralConfig {
             collateral_factor_bps: 8000,
-            has_price_oracle: false,
+            has_price_oracle: true,
             volatility_bps: 500,
         },
     );
@@ -2138,7 +2182,7 @@ fn test_create_loan_request_checks_borrowing_power() {
         &asset_a,
         &AssetCollateralConfig {
             collateral_factor_bps: 1000, // 10% LTV
-            has_price_oracle: false,
+            has_price_oracle: true,
             volatility_bps: 500,
         },
     );
@@ -2206,7 +2250,7 @@ fn test_create_loan_request_with_multi_asset_collateral() {
         &asset_b,
         &AssetCollateralConfig {
             collateral_factor_bps: 5000, // 50% LTV
-            has_price_oracle: false,
+            has_price_oracle: true,
             volatility_bps: 1000,
         },
     );
