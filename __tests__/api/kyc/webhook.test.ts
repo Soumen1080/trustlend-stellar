@@ -196,6 +196,7 @@ describe("POST /api/kyc/webhook", () => {
   it("accepts the webhook only in development when no webhook secret is configured", async () => {
     process.env.NODE_ENV = "development";
     delete process.env.SUMSUB_WEBHOOK_SECRET;
+    process.env.NODE_ENV = "development";
     primeUpdates(1);
     const body = JSON.stringify(reviewedPayload());
 

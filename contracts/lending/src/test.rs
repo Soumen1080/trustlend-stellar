@@ -2177,6 +2177,32 @@ fn test_price_oracle_twap_fallback_is_used() {
     assert_eq!(value, 2_000_0000000);
 }
 
+/// Collateral without an enabled oracle quote must never be assigned face value.
+#[test]
+#[should_panic(expected = "Collateral asset has no active price oracle")]
+fn test_collateral_without_oracle_price_is_rejected() {
+    let (env, contract_id, admin, borrower, asset_a, _asset_b) = setup_multi_collateral();
+    let client = LendingContractClient::new(&env, &contract_id);
+    client.set_asset_collateral_config(
+        &admin,
+        &asset_a,
+        &AssetCollateralConfig { collateral_factor_bps: 7500, has_price_oracle: false, volatility_bps: 0 },
+    );
+    client.deposit_collateral(&borrower, &asset_a, &1_000_0000000);
+    client.get_total_collateral_value(&borrower);
+}
+
+/// A quote stops being usable after the configured freshness window.
+#[test]
+#[should_panic(expected = "Collateral oracle price is stale")]
+fn test_stale_collateral_oracle_price_is_rejected() {
+    let (env, contract_id, _admin, borrower, asset_a, _asset_b) = setup_multi_collateral();
+    let client = LendingContractClient::new(&env, &contract_id);
+    client.deposit_collateral(&borrower, &asset_a, &1_000_0000000);
+    env.ledger().set_timestamp(MAX_COLLATERAL_PRICE_AGE_SECS + 1);
+    client.get_total_collateral_value(&borrower);
+}
+
 /// Only multisig admin can set the price oracle.
 #[test]
 #[should_panic(expected = "Unauthorised")]
@@ -2202,7 +2228,7 @@ fn test_set_asset_collateral_config_non_admin_rejected() {
         &asset_a,
         &AssetCollateralConfig {
             collateral_factor_bps: 8000,
-            has_price_oracle: false,
+            has_price_oracle: true,
             volatility_bps: 500,
         },
     );
@@ -2251,6 +2277,29 @@ fn test_create_loan_request_checks_borrowing_power() {
         result.is_err(),
         "create_loan_request should have failed due to borrowing power"
     );
+}
+
+/// Zero interest cannot be used to bypass the protocol's minimum APR.
+#[test]
+fn test_create_loan_request_rejects_interest_below_protocol_minimum() {
+    let (env, contract_id, _admin, borrower, asset_a, _asset_b) = setup_multi_collateral();
+    let client = LendingContractClient::new(&env, &contract_id);
+    let result = client.try_create_loan_request(
+        &borrower,
+        &LoanRequestInput {
+            amount: 10_000_0000000,
+            duration_days: 30,
+            interest_rate_bps: 0,
+            max_loan_amount: 100_000_0000000,
+            collateral_entries: vec![
+                &env,
+                CollateralEntry { asset: asset_a, amount: 10_000_0000000 },
+            ],
+            rate_model: InterestRateModel::Fixed,
+            reputation_tier: 0,
+        },
+    );
+    assert!(result.is_err());
 }
 
 /// Create loan request with multiple collateral assets.
