@@ -291,6 +291,8 @@ const MAX_PLATFORM_FEE_BPS: u32 = 1000;
 const DEFAULT_FLASH_LOAN_FEE_BPS: u32 = 9;
 /// Safety ceiling on the flash-loan fee (500 bps = 5 %).
 const MAX_FLASH_LOAN_FEE_BPS: u32 = 500;
+/// Lowest annual percentage rate accepted for a loan request (1.00%).
+const MIN_INTEREST_RATE_BPS: u32 = 100;
 
 /// Fee for switching rate models: 0.5% of remaining debt (50 bps).
 const RATE_SWITCH_FEE_BPS: u32 = 50;
@@ -1261,6 +1263,9 @@ impl LendingContract {
 
         if amount > max_loan_amount {
             panic!("Amount exceeds reputation-based limit");
+        }
+        if interest_rate_bps < MIN_INTEREST_RATE_BPS {
+            panic!("Interest rate is below the protocol minimum");
         }
         if duration_days == 0 || duration_days > 365 {
             panic!("Duration must be between 1 and 365 days");

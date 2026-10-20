@@ -169,6 +169,7 @@ export async function POST(request: NextRequest) {
       borrowerWallets: [user.walletAddress, borrowerProfile?.walletAddress ?? ""],
       amountXlm: amount,
       durationDays: Number(durationDays),
+      interestRateBps: quote.aprBps,
     });
     if (!onchain.ok) {
       return NextResponse.json({ error: onchain.reason }, { status: onchain.status });

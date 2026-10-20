@@ -121,6 +121,29 @@ fn test_create_loan_request_basic() {
     assert_eq!(loan.status, LoanStatus::Pending);
 }
 
+#[test]
+#[should_panic(expected = "Interest rate is below the protocol minimum")]
+fn test_create_loan_request_rejects_rate_below_protocol_minimum() {
+    let (env, contract_id, _admin, borrower, collateral_asset) = setup();
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    client.create_loan_request(
+        &borrower,
+        &LoanRequestInput {
+            amount: MIN_BORROW_AMOUNT,
+            duration_days: 30,
+            interest_rate_bps: 0,
+            max_loan_amount: 100_000_0000000,
+            collateral_entries: vec![
+                &env,
+                CollateralEntry { asset: collateral_asset, amount: 100_000_0000000 },
+            ],
+            rate_model: InterestRateModel::Fixed,
+            reputation_tier: 4,
+        },
+    );
+}
+
 /// Verify the interest formula numerically for a known input.
 #[test]
 fn test_interest_calculation_is_correct() {
