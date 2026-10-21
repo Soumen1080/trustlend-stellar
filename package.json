@@ -92,6 +92,7 @@
     "uuid": "11.1.1",
     "elliptic": ">=6.6.1",
     "esbuild": ">=0.25.0",
-    "@babel/core": ">=7.29.6"
+    "@babel/core": ">=7.29.6",
+    "source-map-js": ">=1.2.2"
   }
 }
